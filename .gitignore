@@ -1,0 +1,18 @@
+# Course material (do not commit)
+Final_Project_Overview.pdf
+final_project_tutorial_and_dev_data/
+
+# Environment & secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# Outputs (generated predictions and call logs)
+outputs/*
+!outputs/.gitkeep
+
+# Editors / IDEs
+.vscode/
+.idea/
