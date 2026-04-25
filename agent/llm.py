@@ -1,6 +1,5 @@
 import os
 import time
-import sys
 import requests
 from dotenv import load_dotenv
 
@@ -20,6 +19,10 @@ call_count = 0
 def get_call_count():
     return call_count
 
+def reset_call_count():
+    #reset the count before a new item gets processed
+    global call_count
+    call_count = 0
 
 def build_messages(user_prompt, system_prompt=None):
     #build the chat message list
@@ -33,6 +36,10 @@ def build_messages(user_prompt, system_prompt=None):
 def call_model(messages, temperature=0.0, max_tokens=512):
     #send one request to the ASU LLM API and return the text response
     global call_count
+
+    if not API_KEY:
+        print("Missing OPENAI_API_KEY in .env")
+        return None
 
     if call_count >= 15:
         print("COUNT EXCEEDED: Hit per item cap")
@@ -59,14 +66,18 @@ def call_model(messages, temperature=0.0, max_tokens=512):
         response = requests.post(f"{API_BASE}/chat/completions", json=payload, headers=headers, timeout=60)
         if response.status_code >= 500:
             print("server error",response.status_code,response.text)
-            sys.exit(1)
+            time.sleep(3)
+            continue
         if response.status_code >= 400:
-            print("API error", response.status_code, " : ",response.text[:500])
+            print("API error", response.status_code, " : ",response.text)
             time.sleep(3)
             continue
         data = response.json()
         call_count += 1
         return data["choices"][0]["message"]["content"]
+
+    print("Model call failed after retries")
+    return None
 
 
 if __name__ == "__main__":
