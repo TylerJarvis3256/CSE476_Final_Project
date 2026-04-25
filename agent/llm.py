@@ -33,7 +33,7 @@ def build_messages(user_prompt, system_prompt=None):
         {"role": "user", "content": user_prompt},
     ]
 
-def call_model(messages, temperature=0.0, max_tokens=512):
+def call_model(messages, temperature=0.0, max_tokens=512, stop=None):
     #send one request to the ASU LLM API and return the text response
     global call_count
 
@@ -59,6 +59,8 @@ def call_model(messages, temperature=0.0, max_tokens=512):
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
+    if stop is not None:
+        payload["stop"] = stop
 
 
     #retry a few times if there is a temporary network or server problem.

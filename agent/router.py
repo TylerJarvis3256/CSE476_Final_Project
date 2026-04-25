@@ -18,15 +18,17 @@ def guess_domain(question_text):
         return "math"
     return "common_sense"
 
+def get_domain(item):
+    #small helper so the rest of the code can ask for the domain in one place, 
+    #since we'll have more now
+    if "domain" in item and item["domain"]:
+        return item["domain"]
+    question_text = item.get("input", "")
+    return guess_domain(question_text)
 
 def route_item(item):
     #return the final answer from the correct pipeline file
-    if "domain" in item and item["domain"]:
-        domain = item["domain"]
-    else:
-        question_text = item.get("input", "")
-        domain = guess_domain(question_text)
-
+    domain = get_domain(item)
     question_text = item.get("input", "")
     if domain == "math":
         return solve_math(question_text)
@@ -37,3 +39,8 @@ def route_item(item):
     if domain == "future_prediction":
         return solve_future_prediction(question_text)
     return solve_common_sense(question_text)
+
+if __name__ == "__main__":
+    sample_item = {"input": "Which magazine was started first Arthur's Magazine or First for Women?"}
+    print("guessed domain:", get_domain(sample_item))
+    print("pipeline output:", route_item(sample_item))
