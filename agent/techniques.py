@@ -3,8 +3,6 @@ from agent.llm import build_messages, call_model
 
 
 def ask_llm(prompt_text, temperature=0.0, max_tokens=512, system_prompt=None):
-    # I kept one helper here so the rest of the file does not repeat the same
-    # call_model(build_messages(...)) code over and over.
     if system_prompt is None:
         system_prompt = prompts.SYSTEM_DEFAULT
 
@@ -57,6 +55,31 @@ def program_of_thought(question, max_tokens=700):
         "raw": raw_response,
         "code": code,
         "execution": execution,
+    }
+
+
+def tree_of_thoughts(question, branches=3, expected_format="short final answer"):
+    # Ask for several candidate answers, then choose one with a judge step.
+    prompt_text = prompts.TOT_GENERATE.format(problem=question, branches=branches)
+    raw_response = ask_llm(prompt_text, temperature=0.5, max_tokens=700)
+    parsed_list = tools.extract_json_list(raw_response)
+
+    candidates = []
+    for item in parsed_list:
+        if isinstance(item, dict):
+            answer = str(item.get("answer", "")).strip()
+            if answer:
+                candidates.append(answer)
+        elif isinstance(item, str):
+            clean_item = item.strip()
+            if clean_item:
+                candidates.append(clean_item)
+
+    best_answer = judge(question, candidates, expected_format=expected_format)
+    return {
+        "answer": best_answer,
+        "raw": raw_response,
+        "candidates": candidates,
     }
 
 
@@ -141,6 +164,66 @@ def step_back(question):
         "answer": answer,
         "principles": principles,
         "raw": raw_response,
+    }
+
+
+def react_loop(question, max_steps=2):
+    # Very small ReAct loop: think, maybe run Python, then continue.
+    scratchpad = ""
+    trace = []
+    final_answer = ""
+
+    for _ in range(max_steps):
+        prompt_text = prompts.REACT_MATH.format(
+            problem=question,
+            scratchpad=scratchpad or "(empty)",
+        )
+        raw_response = ask_llm(prompt_text, temperature=0.0, max_tokens=500)
+        trace.append(raw_response)
+
+        thought, action, action_input = tools.extract_react_parts(raw_response)
+
+        if action == "finish":
+            final_answer = tools.extract_final_answer(action_input or raw_response)
+            break
+
+        if action == "python":
+            execution = tools.python_exec(action_input)
+            observation = (
+                execution["value"]
+                or execution["stdout"]
+                or execution["stderr"]
+                or execution["error"]
+            )
+
+            scratchpad = (
+                scratchpad
+                + "\nThought: "
+                + thought
+                + "\nAction: "
+                + action
+                + "\nAction Input: "
+                + action_input
+                + "\nObservation: "
+                + str(observation)
+                + "\n"
+            ).strip()
+
+            if execution["value"]:
+                final_answer = str(execution["value"]).strip()
+                break
+
+            continue
+
+        final_answer = tools.extract_final_answer(raw_response)
+        break
+
+    if not final_answer and trace:
+        final_answer = tools.extract_final_answer(trace[-1])
+
+    return {
+        "answer": final_answer,
+        "trace": trace,
     }
 
 
