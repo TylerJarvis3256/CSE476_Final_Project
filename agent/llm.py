@@ -1,52 +1,61 @@
 import os
 import time
+
 import requests
 from dotenv import load_dotenv
 
-#load values from a local .env file, this is how people don't leak the API keys apparently
+# Load values from a local .env file if one exists.
 load_dotenv()
 
-#read that API key that should come from the env file
-API_KEY = os.getenv("OPENAI_API_KEY")
+# Read the ASU API settings from environment variables.
+API_KEY = os.getenv("OPENAI_API_KEY", "sk-tRX7eS_JfCfGCfC6-1xvKg")
+API_BASE = os.getenv("API_BASE", "https://openai.rc.asu.edu/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "qwen3-30b-a3b-instruct-2507")
 
-#default values, not needed from env
-API_BASE = "https://openai.rc.asu.edu/v1"
-MODEL_NAME = "qwen3-30b-a3b-instruct-2507"
+# The assignment wants low call usage, so I track calls for each question.
+CALL_CAP_PER_ITEM = 15
+CALL_WARN_AT = 12
+REQUEST_TIMEOUT_S = 60
 
-#total count across logic
-call_count = 0
-#return the current call count to ensure success
+
+class CallBudgetExceeded(Exception):
+    pass
+
+
+_call_count = 0
+
+
 def get_call_count():
-    return call_count
+    return _call_count
+
 
 def reset_call_count():
-    #reset the count before a new item gets processed
-    global call_count
-    call_count = 0
+    global _call_count
+    _call_count = 0
+
 
 def build_messages(user_prompt, system_prompt=None):
-    #build the chat message list
+    # This matches the OpenAI-style chat format expected by the ASU endpoint.
     if system_prompt is None:
-        system_prompt = "You are a helpful assistant."
+        system_prompt = "You are a careful reasoning agent. Follow the output format exactly."
+
     return [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
 
+
 def call_model(messages, temperature=0.0, max_tokens=512, stop=None):
-    #send one request to the ASU LLM API and return the text response
-    global call_count
+    global _call_count
 
     if not API_KEY:
-        print("Missing OPENAI_API_KEY in .env")
-        return None
+        raise RuntimeError("OPENAI_API_KEY is missing. Put it in your .env file.")
 
-    if call_count >= 15:
-        print("COUNT EXCEEDED: Hit per item cap")
-        return None
+    if _call_count >= CALL_CAP_PER_ITEM:
+        raise CallBudgetExceeded(f"hit per-item cap of {CALL_CAP_PER_ITEM}")
 
-    if call_count >= 12:
-        print("Warning: near call cap:", call_count/15)
+    if _call_count >= CALL_WARN_AT:
+        print(f"[warn] near call cap: {_call_count}/{CALL_CAP_PER_ITEM}")
 
     headers = {
         "Authorization": f"Bearer {API_KEY}",
@@ -62,27 +71,46 @@ def call_model(messages, temperature=0.0, max_tokens=512, stop=None):
     if stop is not None:
         payload["stop"] = stop
 
+    url = f"{API_BASE}/chat/completions"
+    last_error = None
 
-    #retry a few times if there is a temporary network or server problem.
-    for i in range(3):
-        response = requests.post(f"{API_BASE}/chat/completions", json=payload, headers=headers, timeout=60)
+    # Retry a few times if the connection fails or the server has a 5xx error.
+    for attempt in range(3):
+        try:
+            response = requests.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=REQUEST_TIMEOUT_S,
+            )
+        except requests.exceptions.ConnectionError as error:
+            last_error = error
+            if attempt < 2:
+                time.sleep(2 ** (attempt + 1))
+            continue
+
         if response.status_code >= 500:
-            print("server error",response.status_code,response.text)
-            time.sleep(3)
+            last_error = RuntimeError(
+                f"server error {response.status_code}: {response.text[:300]}"
+            )
+            if attempt < 2:
+                time.sleep(2 ** (attempt + 1))
             continue
+
+        # Do not retry 4xx errors because those usually mean the request itself is bad.
         if response.status_code >= 400:
-            print("API error", response.status_code, " : ",response.text)
-            time.sleep(3)
-            continue
+            raise RuntimeError(f"API error {response.status_code}: {response.text[:500]}")
+
         data = response.json()
-        call_count += 1
+        _call_count += 1
         return data["choices"][0]["message"]["content"]
 
-    print("Model call failed after retries")
-    return None
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("the model call failed but no clear error was captured")
 
 
 if __name__ == "__main__":
-    sample_messages = build_messages("Say hi in exactly three words.")
-    print(call_model(sample_messages))
+    demo_messages = build_messages("What is 17 + 28? Reply with only the number.")
+    print(call_model(demo_messages))
     print(f"calls: {get_call_count()}")
