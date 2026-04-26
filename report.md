@@ -35,3 +35,13 @@ Use `run_agent.py` with an input JSON file and output path. Use `eval/evaluate.p
 ## Limitations
 
 The hidden course grader may use acceptance logic that differs from the local evaluator. The domain router uses heuristics first and only falls back to an LLM classification call when needed, so misclassification remains a possible failure mode on ambiguous items.
+
+## Contributions
+
+Tyler Jarvis: Implemented the agent system. Set up initial repository. Implemented the core LLM client (llm.py) with call budgeting and retry logic, built the entire techniques library (techniques.py) including all eight inference-time methods (Chain-of-Thought, Self-Consistency, Program-of-Thought, Self-Refine, Decomposition, Step-Back, Tree-of-Thoughts, and ReAct), implemented all five domain-specific pipelines (math, coding, common-sense, planning, future prediction), and upgraded the router with an LLM-based domain classifier. He also maintained the repository and managed pull request integration throughout the project.
+
+Nathan Svoboda: Created project foundation, including the initial agent and routing setup, the base structure of run_agent.py, and early implementations of the LLM client and pipeline scaffolding.
+
+Matthew Eastin: contributed the LLM-as-judge evaluation module (eval/judge.py), the full set of agent prompt templates (prompts.py), and the tool and normalizer helper functions (tools.py).
+
+Theodore Zhang: identified and resolved security vulnerabilities in which a live API key had been hardcoded into the repository, replacing it with a safe placeholder in .env.example, and wrote the team contribution section of this report.
