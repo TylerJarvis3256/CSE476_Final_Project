@@ -1,1 +1,1 @@
-#evaluation package placeholder for later testing
+"""Evaluation helpers for the CSE476 project."""
