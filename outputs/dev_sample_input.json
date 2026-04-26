@@ -1,0 +1,27 @@
+[
+  {
+    "input": "Let $ABCD$ be a convex quadrilateral with $AB = CD = 10$ , $BC = 14$ , and $AD = 2\\sqrt{65}$ . Assume that the diagonals of $ABCD$ intersect at point $P$ , and that the sum of the areas of triangles $APB$ and $CPD$ equals the sum of the areas of triangles $BPC$ and $APD$ . Find the area of quadrilateral $ABCD$ .",
+    "output": "112",
+    "domain": "math"
+  },
+  {
+    "input": "Retrieves the names of the repositories of a specified GitHub user, sorted in ascending order by their creation date. The function queries the GitHub API for all repositories of a given user, parses the response to extract the names and creation dates, and returns the repository names sorted by the date they were created.\nThe function should output with:\n    list of str: A list of repository names, sorted by their creation dates from oldest to newest.\nYou should write self-contained code starting with:\n```\nimport collections\nimport json\nimport requests\ndef task_func(user, API_URL = 'https://api.github.com/users/'):\n```",
+    "output": "    response = requests.get(API_URL + user + '/repos')\n    data = json.loads(response.text)\n    repos = {repo['name']: repo['created_at'] for repo in data}\n    sorted_repos = collections.OrderedDict(sorted(repos.items(), key=lambda x: x[1]))\n    return list(sorted_repos.keys())",
+    "domain": "coding"
+  },
+  {
+    "input": "You are an agent that can predict future events. The event to be predicted: \"请预测北京时间2025-08-04, 新榜·视频号指数·搞笑·日榜的前3名分别是哪几个视频号？（只回答视频号名称）\"\n        IMPORTANT: Your final answer MUST end with this exact format:\n        \\boxed{YOUR_PREDICTION}\n        Do not use any other format. Do not refuse to make a prediction. Do not say \"I cannot predict the future.\" You must make a clear prediction based on the best data currently available, using the box format specified above.",
+    "output": "['辉叔在线', '铁汁妹妹s', '七颗猩猩']",
+    "domain": "future_prediction"
+  },
+  {
+    "input": "I am playing with a set of objects. Here are the actions I can do\n\n   Attack object\n   Feast object from another object\n   Succumb object\n   Overcome object from another object\n\nI have the following restrictions on my actions:\n    To perform Attack action, the following facts need to be true: Province object, Planet object, Harmony.\n    Once Attack action is performed the following facts will be true: Pain object.\n    Once Attack action is performed the following facts will be false: Province object, Planet object, Harmony.\n    To perform Succumb action, the following facts need to be true: Pain object.\n    Once Succumb action is performed the following facts will be true: Province object, Planet object, Harmony.    \n    Once Succumb action is performed the following facts will be false: Pain object.\n    To perform Overcome action, the following needs to be true: Province other object, Pain object.\n    Once Overcome action is performed the following will be true: Harmony, Province object, Object Craves other object.\n    Once Overcome action is performed the following will be false: Province other object, Pain object.\n    To perform Feast action, the following needs to be true: Object Craves other object, Province object, Harmony.\n    Once Feast action is performed the following will be true: Pain object, Province other object.\n    Once Feast action is performed the following will be false:, Object Craves other object, Province object, Harmony.\n\n[STATEMENT]\nAs initial conditions I have that, object d craves object c, harmony, planet object a, planet object b, planet object c, province object a, province object b and province object d.\nMy goal is to have that object c craves object d.\n\nMy plan is as follows:\n\n[PLAN]\nfeast object d from object c\nsuccumb object d\nattack object c\novercome object c from object d\n[PLAN END]\n\n[STATEMENT]\nAs initial conditions I have that, object b craves object d, object c craves object a, object d craves object c, harmony, planet object a and province object b.\nMy goal is to have that object a craves object d and object d craves object c.\n\nMy plan is as follows:\n\n[PLAN]",
+    "output": "(feast b d)\n(succumb b)\n(feast d c)\n(overcome d b)\n(feast c a)\n(succumb c)\n(feast d b)\n(overcome d c)\n(attack a)\n(overcome a d)\n",
+    "domain": "planning"
+  },
+  {
+    "input": "Which magazine was started first Arthur's Magazine or First for Women?",
+    "output": "Arthur's Magazine",
+    "domain": "common_sense"
+  }
+]
