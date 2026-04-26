@@ -1,0 +1,32 @@
+[
+  {
+    "index": 1,
+    "domain_hint": "math",
+    "calls": 4,
+    "error": "server error 500: {\"error\":{\"message\":\"litellm.APIConnectionError: AsuairException - Error code: 500. Received Model Group=qwen3-30b-a3b-instruct-2507\\nAvailable Model Group Fallbacks=None\",\"type\":null,\"param\":null,\"code\":\"500\"}}"
+  },
+  {
+    "index": 2,
+    "domain_hint": "coding",
+    "calls": 1,
+    "error": "server error 500: {\"error\":{\"message\":\"litellm.APIConnectionError: AsuairException - Error code: 500. Received Model Group=qwen3-30b-a3b-instruct-2507\\nAvailable Model Group Fallbacks=None\",\"type\":null,\"param\":null,\"code\":\"500\"}}"
+  },
+  {
+    "index": 3,
+    "domain_hint": "future_prediction",
+    "calls": 1,
+    "error": ""
+  },
+  {
+    "index": 4,
+    "domain_hint": "planning",
+    "calls": 2,
+    "error": "HTTPSConnectionPool(host='openai.rc.asu.edu', port=443): Read timed out. (read timeout=60)"
+  },
+  {
+    "index": 5,
+    "domain_hint": "common_sense",
+    "calls": 0,
+    "error": "server error 500: {\"error\":{\"message\":\"litellm.APIConnectionError: AsuairException - Error code: 500. Received Model Group=qwen3-30b-a3b-instruct-2507\\nAvailable Model Group Fallbacks=None\",\"type\":null,\"param\":null,\"code\":\"500\"}}"
+  }
+]
