@@ -1,264 +1,446 @@
-"""Utility helpers and answer normalizers for the CSE476 reasoning agent.
-
-All functions in this module use only the Python standard library — no external
-dependencies are required.
-"""
-
+import ast
+import json
+import os
 import re
-import string
-import unicodedata
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+# This file is a grab-bag of helper functions.
+# I kept them together because many different pipelines need the same small tasks:
+# cleaning model output, extracting answers, normalizing text, and running Python.
 
 
-# ---------------------------------------------------------------------------
-# General text utilities
-# ---------------------------------------------------------------------------
-
-def normalize_whitespace(text):
-    """Collapse any run of whitespace into a single space and strip ends."""
-    if text is None:
-        return ""
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def remove_punctuation(text):
-    """Remove all punctuation characters from *text*."""
-    return text.translate(str.maketrans("", "", string.punctuation))
-
-
-def normalize_unicode(text):
-    """Convert *text* to NFC unicode normal form."""
-    return unicodedata.normalize("NFC", text)
-
-
-def clean_text(text):
-    """Apply unicode normalisation, collapse whitespace, and lowercase."""
-    if not text:
-        return ""
-    text = normalize_unicode(text)
-    text = normalize_whitespace(text)
-    return text.lower()
-
-
-# ---------------------------------------------------------------------------
-# Answer extraction helpers
-# ---------------------------------------------------------------------------
-
-def extract_last_line(text):
-    """Return the last non-empty line of *text*."""
-    if not text:
-        return ""
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    return lines[-1] if lines else ""
-
-
-def extract_answer_after_prefix(text, prefix="Answer:"):
-    """Return the text that follows *prefix* (case-insensitive), or None."""
-    pattern = re.compile(re.escape(prefix), re.IGNORECASE)
-    match = pattern.search(text or "")
+def strip_code_fences(text):
+    text = (text or "").strip()
+    match = re.search(r"```[a-zA-Z0-9_+-]*\s*(.*?)```", text, flags=re.DOTALL)
     if match:
-        return text[match.end():].strip()
-    return None
+        return match.group(1).strip()
+    return text
 
 
-def extract_first_number(text):
-    """Return the first integer or decimal number found in *text*, or None."""
-    match = re.search(r"-?\d+(?:\.\d+)?", text or "")
-    return match.group() if match else None
+def extract_code_block(text):
+    # First try the easy case: the model returned a fenced code block.
+    text = text or ""
+    stripped = strip_code_fences(text)
+    if stripped != text.strip():
+        return stripped
 
+    # If there are no fences, try to find the start of Python code.
+    for marker in ("import ", "from ", "def ", "class "):
+        index = text.find(marker)
+        if index != -1:
+            return text[index:].strip()
 
-def extract_yes_no(text):
-    """Return 'yes', 'no', or None by scanning the start of *text*."""
-    cleaned = clean_text(text or "")
-    if re.match(r"\byes\b", cleaned):
-        return "yes"
-    if re.match(r"\bno\b", cleaned):
-        return "no"
-    return None
-
-
-def extract_true_false(text):
-    """Return 'true', 'false', or None from the start of *text*."""
-    cleaned = clean_text(text or "")
-    if cleaned.startswith("true"):
-        return "true"
-    if cleaned.startswith("false"):
-        return "false"
-    return None
-
-
-# ---------------------------------------------------------------------------
-# Math answer normalizers
-# ---------------------------------------------------------------------------
-
-def normalize_math_answer(text):
-    """Strip whitespace, remove surrounding punctuation, and normalise a math answer.
-
-    Examples
-    --------
-    >>> normalize_math_answer('  42  ')
-    '42'
-    >>> normalize_math_answer('$3.14.')
-    '3.14'
-    """
-    if text is None:
-        return ""
-    text = str(text).strip()
-    # Remove common surrounding symbols: $, commas in numbers, trailing periods
-    text = text.replace(",", "")
-    text = re.sub(r"^\$+|\$+$", "", text)
-    text = text.rstrip(".")
     return text.strip()
 
 
-def parse_numeric(text):
-    """Try to convert *text* to float; return None if not possible."""
-    try:
-        return float(normalize_math_answer(text))
-    except (ValueError, TypeError):
+def extract_boxed(text):
+    # Future-prediction answers often use \boxed{...}, so this extracts the inside.
+    text = text or ""
+    start = text.find(r"\boxed{")
+    if start == -1:
         return None
 
+    index = start + len(r"\boxed{")
+    depth = 1
+    result = []
 
-def numbers_are_close(a, b, rel_tol=1e-4):
-    """Return True if two numeric strings represent approximately equal values."""
-    fa = parse_numeric(a)
-    fb = parse_numeric(b)
-    if fa is None or fb is None:
-        return False
-    if fa == fb == 0:
-        return True
-    return abs(fa - fb) <= rel_tol * max(abs(fa), abs(fb))
+    while index < len(text):
+        char = text[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return "".join(result).strip()
+        result.append(char)
+        index += 1
+
+    return None
 
 
-# ---------------------------------------------------------------------------
-# String matching / scoring helpers
-# ---------------------------------------------------------------------------
+def extract_integer(text):
+    text = text or ""
 
-def normalize_answer(text):
-    """Lowercase, strip punctuation and extra whitespace — canonical form for comparison."""
+    boxed = extract_boxed(text)
+    if boxed:
+        match = re.search(r"-?\d+", boxed)
+        if match:
+            return match.group(0)
+
+    match = re.search(r"(?:final answer|answer)\s*[:=]\s*(-?\d+)", text, flags=re.IGNORECASE)
+    if match:
+        return match.group(1)
+
+    numbers = re.findall(r"-?\d+", text)
+    if numbers:
+        return numbers[-1]
+
+    return None
+
+
+def extract_number(text):
+    text = text or ""
+
+    boxed = extract_boxed(text)
+    if boxed:
+        return boxed
+
+    match = re.search(r"(?:final answer|answer)\s*[:=]\s*([^\n]+)", text, flags=re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+
+    numbers = re.findall(r"-?\d+(?:\.\d+)?", text)
+    if numbers:
+        return numbers[-1]
+
+    return None
+
+
+def extract_json_list(text):
+    # Some prompts ask the model to return JSON. This tries a few safe ways to parse it.
+    text = strip_code_fences(text)
+    start = text.find("[")
+    end = text.rfind("]")
+
+    if start == -1 or end == -1 or end < start:
+        return []
+
+    payload = text[start : end + 1]
+
+    for loader in (json.loads, ast.literal_eval):
+        try:
+            value = loader(payload)
+            if isinstance(value, list):
+                return value
+        except Exception:
+            pass
+
+    return []
+
+
+def normalize_phrase(text):
+    # Used for simple answer comparison in common-sense style tasks.
+    text = (text or "").strip().lower()
+    text = re.sub(r"^answer\s*[:=]\s*", "", text)
+    text = re.sub(r"[^\w\s\\\-\[\]\(\),']", " ", text)
+    text = re.sub(r"\b(a|an|the)\b", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def extract_final_answer(text):
+    # Try a few common output styles and return the cleanest final answer we can.
+    text = (text or "").strip()
+
+    boxed = extract_boxed(text)
+    if boxed:
+        return boxed
+
+    match = re.search(
+        r"(?:final answer|answer)\s*[:=]\s*(.+)",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if match:
+        first_line = match.group(1).strip().splitlines()[0].strip()
+        return first_line.strip("` ")
+
+    lines = []
+    for line in text.splitlines():
+        line = line.strip()
+        if line:
+            lines.append(line)
+
+    if not lines:
+        return ""
+
+    return lines[-1].strip("` ")
+
+
+def extract_required_prefix(text):
+    # Coding problems often include starter code that the answer should begin with.
+    match = re.search(
+        r"starting with:\s*```(?:python)?\s*(.*?)```",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if match:
+        return match.group(1).strip()
+    return ""
+
+
+def clean_code_answer(text, required_prefix=""):
+    code = extract_code_block(text)
+    clean_lines = []
+
+    for line in code.splitlines():
+        clean_lines.append(line.rstrip())
+
+    while clean_lines and not clean_lines[0].strip():
+        clean_lines.pop(0)
+
+    code = "\n".join(clean_lines).strip()
+
+    # If the assignment gave a required prefix, try to force it back in.
+    if required_prefix and code:
+        required_prefix = required_prefix.strip()
+        if not code.startswith(required_prefix):
+            if code.startswith("def ") and "def " in required_prefix:
+                code_lines = code.splitlines()
+                rest = "\n".join(code_lines[1:]).strip()
+                if rest:
+                    code = required_prefix + "\n" + rest
+                else:
+                    code = required_prefix
+            else:
+                code = required_prefix + "\n" + code
+
+    return code.strip()
+
+
+def extract_action_lines(text):
+    # Planning outputs should be a series of lines like: (action a b)
+    lines = []
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip()
+        if line.startswith("(") and line.endswith(")"):
+            lines.append(line)
+    return lines
+
+
+def extract_action_names(problem):
+    # The planning prompts list actions like "Attack object" or "Feast object..."
+    names = []
+    for raw_line in (problem or "").splitlines():
+        match = re.match(r"\s*([A-Za-z]+)\s+object", raw_line)
+        if match:
+            name = match.group(1).lower()
+            if name not in names:
+                names.append(name)
+    return names
+
+
+def validate_action_lines(text, allowed_actions=None):
+    bad_lines = []
+    allowed = set(allowed_actions or [])
+    pattern = re.compile(r"^\(([a-z_]+)(?: [a-z0-9_]+){1,2}\)$")
+
+    lines = extract_action_lines(text)
+    for line in lines:
+        match = pattern.match(line)
+        if not match:
+            bad_lines.append(line)
+            continue
+        if allowed and match.group(1) not in allowed:
+            bad_lines.append(line)
+
+    if not lines:
+        bad_lines.append("(missing plan)")
+
+    return len(bad_lines) == 0, bad_lines
+
+
+def normalize_action_plan(text):
+    return "\n".join(extract_action_lines(text)).strip()
+
+
+def ensure_boxed(text):
+    text = (text or "").strip()
     if not text:
-        return ""
-    text = clean_text(text)
-    text = remove_punctuation(text)
-    return normalize_whitespace(text)
+        return r"\boxed{}"
+
+    boxed = extract_boxed(text)
+    if boxed is not None:
+        return rf"\boxed{{{boxed}}}"
+
+    return rf"\boxed{{{text}}}"
 
 
-def exact_match(prediction, expected):
-    """Return True if normalised *prediction* equals normalised *expected*."""
-    return normalize_answer(prediction) == normalize_answer(expected)
+def parse_list_like(text):
+    # Used mostly for future-prediction answers where the model may return a list.
+    text = (text or "").strip()
+    payload = extract_boxed(text) or text
+    payload = strip_code_fences(payload)
+
+    for loader in (json.loads, ast.literal_eval):
+        try:
+            value = loader(payload)
+            if isinstance(value, list):
+                return [str(item).strip() for item in value]
+        except Exception:
+            pass
+
+    if "," in payload:
+        parts = []
+        for part in payload.split(","):
+            part = part.strip()
+            if part:
+                parts.append(part)
+        return parts
+
+    if payload:
+        return [payload]
+
+    return []
 
 
-def contains_match(prediction, expected):
-    """Return True if *expected* (normalised) appears somewhere in *prediction* (normalised)."""
-    return normalize_answer(expected) in normalize_answer(prediction)
+def normalize_future_answer(text):
+    items = parse_list_like(text)
+    if items:
+        clean_items = []
+        for item in items:
+            clean_items.append(normalize_phrase(item))
+        return " | ".join(clean_items)
+    return normalize_phrase(extract_boxed(text) or text)
 
 
-def token_overlap_score(prediction, expected):
-    """Return the F1-style token overlap score between prediction and expected."""
-    pred_tokens = set(normalize_answer(prediction).split())
-    exp_tokens = set(normalize_answer(expected).split())
-    if not pred_tokens or not exp_tokens:
-        return 0.0
-    common = pred_tokens & exp_tokens
-    precision = len(common) / len(pred_tokens)
-    recall = len(common) / len(exp_tokens)
-    if precision + recall == 0:
-        return 0.0
-    return 2 * precision * recall / (precision + recall)
+def normalize_math_answer(text):
+    boxed = extract_boxed(text)
+    if boxed:
+        return normalize_phrase(boxed)
+
+    number = extract_number(text)
+    if number:
+        return normalize_phrase(number)
+
+    return normalize_phrase(extract_final_answer(text))
 
 
-# ---------------------------------------------------------------------------
-# Domain-specific answer checkers
-# ---------------------------------------------------------------------------
-
-def check_math(prediction, expected):
-    """Return True if prediction and expected represent the same number (with tolerance)."""
-    if numbers_are_close(prediction, expected):
-        return True
-    return exact_match(normalize_math_answer(prediction), normalize_math_answer(expected))
-
-
-def check_yes_no(prediction, expected):
-    """Return True if both prediction and expected resolve to the same yes/no value."""
-    pred = extract_yes_no(prediction)
-    exp = extract_yes_no(expected)
-    if pred is None or exp is None:
-        return exact_match(prediction, expected)
-    return pred == exp
+def normalize_code(text):
+    code = clean_code_answer(text)
+    lines = []
+    for line in code.splitlines():
+        line = line.rstrip()
+        if line.strip():
+            lines.append(line)
+    return "\n".join(lines).strip()
 
 
-def check_true_false(prediction, expected):
-    """Return True if both prediction and expected resolve to the same true/false value."""
-    pred = extract_true_false(prediction)
-    exp = extract_true_false(expected)
-    if pred is None or exp is None:
-        return exact_match(prediction, expected)
-    return pred == exp
+def majority_vote(candidates, normalizer=None):
+    # Used by self-consistency. We count normalized answers but keep the original text.
+    tally = {}
+    first_original = {}
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+
+        if normalizer is None:
+            key = str(candidate).strip()
+        else:
+            key = normalizer(candidate)
+
+        if not key:
+            continue
+
+        tally[key] = tally.get(key, 0) + 1
+        if key not in first_original:
+            first_original[key] = str(candidate).strip()
+
+    if not tally:
+        return "", {}
+
+    winner_key = max(tally, key=lambda key: (tally[key], key))
+    return first_original[winner_key], tally
 
 
-def check_answer(prediction, expected, domain=None):
-    """Dispatch to the appropriate checker for *domain*, falling back to exact match.
-
-    Parameters
-    ----------
-    prediction : str
-        The model's raw output.
-    expected : str
-        The ground-truth answer.
-    domain : str or None
-        One of 'math', 'coding', 'planning', 'future_prediction', 'common_sense', or None.
-
-    Returns
-    -------
-    bool
-        True if the prediction should be considered correct.
-    """
-    if domain == "math":
-        return check_math(prediction, expected)
-    if domain in ("planning", "future_prediction"):
-        tf = check_true_false(prediction, expected)
-        if tf is not None:
-            return tf
-    if domain == "common_sense":
-        yn = check_yes_no(prediction, expected)
-        if yn is not None:
-            return yn
-        return exact_match(prediction, expected) or contains_match(prediction, expected)
-    # Default: exact match with token-overlap fallback
-    if exact_match(prediction, expected):
-        return True
-    if token_overlap_score(prediction, expected) >= 0.8:
-        return True
-    return False
+def truncate_answer(text, limit=4900):
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
 
 
-# ---------------------------------------------------------------------------
-# Misc utilities
-# ---------------------------------------------------------------------------
+def extract_react_parts(text):
+    text = text or ""
+    thought = ""
+    action = ""
+    action_input = ""
 
-def truncate(text, max_chars=200, suffix="..."):
-    """Return *text* truncated to *max_chars*, appending *suffix* if cut."""
-    if not text or len(text) <= max_chars:
-        return text or ""
-    return text[:max_chars].rstrip() + suffix
+    thought_match = re.search(r"Thought:\s*(.*)", text)
+    action_match = re.search(r"Action:\s*(.*)", text)
+    input_match = re.search(r"Action Input:\s*(.*)", text, flags=re.DOTALL)
 
+    if thought_match:
+        thought = thought_match.group(1).strip()
+    if action_match:
+        action = action_match.group(1).strip().lower()
+    if input_match:
+        action_input = input_match.group(1).strip()
 
-def safe_strip(value):
-    """Return stripped string, or empty string for None / non-string values."""
-    if value is None:
-        return ""
-    return str(value).strip()
-
-
-def is_empty(value):
-    """Return True if *value* is None, empty string, or whitespace-only."""
-    return not safe_strip(value)
+    return thought, action, action_input
 
 
-def dict_get(d, *keys, default=None):
-    """Safely get a nested value from a dict using a chain of keys."""
-    current = d
-    for key in keys:
-        if not isinstance(current, dict):
-            return default
-        current = current.get(key, default)
-    return current
+def python_exec(code, timeout_s=5):
+    # This runs model-generated Python in a temporary folder.
+    # It is mainly used for program-of-thought and simple code checking.
+    code = strip_code_fences(code)
+
+    safe_env = {
+        "PATH": os.environ.get("PATH", ""),
+        "PYTHONIOENCODING": "utf-8",
+        "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""),
+        "WINDIR": os.environ.get("WINDIR", ""),
+        "TEMP": os.environ.get("TEMP", ""),
+        "TMP": os.environ.get("TMP", ""),
+    }
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        script_path = Path(temp_dir) / "scratch.py"
+        script_path.write_text(code, encoding="utf-8")
+
+        try:
+            result = subprocess.run(
+                [sys.executable, str(script_path)],
+                capture_output=True,
+                text=True,
+                timeout=timeout_s,
+                cwd=temp_dir,
+                env=safe_env,
+            )
+        except subprocess.TimeoutExpired as error:
+            return {
+                "ok": False,
+                "stdout": error.stdout or "",
+                "stderr": error.stderr or "",
+                "value": None,
+                "error": "timeout",
+            }
+        except Exception as error:
+            return {
+                "ok": False,
+                "stdout": "",
+                "stderr": "",
+                "value": None,
+                "error": str(error),
+            }
+
+    stdout = result.stdout or ""
+    stderr = result.stderr or ""
+
+    # If the script prints ANSWER=..., use that. Otherwise try to find a number.
+    answer_match = re.search(r"ANSWER\s*=\s*(.+)", stdout)
+    if answer_match:
+        value = answer_match.group(1).strip()
+    else:
+        value = extract_boxed(stdout) or extract_number(stdout)
+
+    return {
+        "ok": result.returncode == 0,
+        "stdout": stdout,
+        "stderr": stderr,
+        "value": value,
+        "error": None if result.returncode == 0 else f"exit_code={result.returncode}",
+    }
+
+
+if __name__ == "__main__":
+    assert strip_code_fences("```python\nprint(1)\n```") == "print(1)"
+    assert extract_integer("FINAL ANSWER: 42") == "42"
+    assert extract_boxed(r"test \boxed{abc}") == "abc"
+    assert extract_json_list('["a", "b"]') == ["a", "b"]
+    assert normalize_phrase("The Arthur's Magazine.") == "arthur's magazine"
+    assert validate_action_lines("(feast a b)\n(attack c)", ["feast", "attack"])[0]
