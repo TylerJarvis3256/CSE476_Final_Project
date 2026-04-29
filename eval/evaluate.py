@@ -1,18 +1,16 @@
 import argparse
 import json
 from pathlib import Path
-
 from agent import tools
 from eval.judge import judge_prediction
 
-
+#load json
 def load_json(path):
     with Path(path).open("r", encoding="utf-8") as handle:
         return json.load(handle)
 
-
 def prediction_text(item):
-    # Support either {"output": "..."} or {"prediction": "..."} style rows.
+    #support either {"output": "..."} or {"prediction": "..."} style rows.
     if isinstance(item, dict):
         if "output" in item:
             return str(item["output"])
@@ -22,7 +20,7 @@ def prediction_text(item):
 
 
 def strict_match(domain, expected, predicted):
-    # Each domain has slightly different formatting, so normalize accordingly.
+    #each domain has slightly different formatting, so normalize accordingly.
     if domain == "math":
         return tools.normalize_math_answer(expected) == tools.normalize_math_answer(predicted)
     if domain == "coding":
@@ -33,7 +31,7 @@ def strict_match(domain, expected, predicted):
         return tools.normalize_future_answer(expected) == tools.normalize_future_answer(predicted)
     return tools.normalize_phrase(expected) == tools.normalize_phrase(predicted)
 
-
+#ensure that the calls are counted for other part
 def average_calls(path):
     if not path:
         return None
@@ -50,13 +48,11 @@ def average_calls(path):
     for item in payload:
         if isinstance(item, dict):
             calls.append(int(item.get("calls", 0)))
-
     if not calls:
         return None
-
     return sum(calls) / len(calls)
 
-
+#evaluate per input
 def evaluate(predictions_path, truth_path, calls_log_path=None, use_judge=False):
     predictions = load_json(predictions_path)
     truth = load_json(truth_path)
@@ -76,7 +72,7 @@ def evaluate(predictions_path, truth_path, calls_log_path=None, use_judge=False)
 
         is_correct = strict_match(domain, expected, predicted)
 
-        # Optional slower fallback: ask the LLM judge if strict matching says false.
+        #checking by asking the LLM judge if strict matching says false
         if not is_correct and use_judge:
             is_correct = judge_prediction(
                 question=str(expected_item.get("input", "")),
@@ -87,25 +83,21 @@ def evaluate(predictions_path, truth_path, calls_log_path=None, use_judge=False)
 
         totals[domain] = totals.get(domain, 0) + 1
         correct[domain] = correct.get(domain, 0) + int(is_correct)
-
     total_items = sum(totals.values())
     total_correct = sum(correct.values())
-
     print("Per-domain accuracy")
     for domain in sorted(totals):
         score = correct.get(domain, 0)
         total = totals[domain]
         accuracy = score / total if total else 0.0
         print(f"{domain}: {score}/{total} ({accuracy:.2%})")
-
     overall = total_correct / total_items if total_items else 0.0
     print(f"overall: {total_correct}/{total_items} ({overall:.2%})")
-
     avg_calls = average_calls(calls_log_path)
     if avg_calls is not None:
         print(f"avg calls/item: {avg_calls:.2f}")
 
-
+#must eval predictions 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate CSE476 agent predictions.")
     parser.add_argument("predictions", help="Path to the predictions JSON file.")

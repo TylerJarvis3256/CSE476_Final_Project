@@ -1,7 +1,6 @@
 from agent import prompts, tools
 from agent.llm import build_messages, call_model
 
-
 def ask_llm(prompt_text, temperature=0.0, max_tokens=512, system_prompt=None):
     if system_prompt is None:
         system_prompt = prompts.SYSTEM_DEFAULT
@@ -9,28 +8,23 @@ def ask_llm(prompt_text, temperature=0.0, max_tokens=512, system_prompt=None):
     messages = build_messages(prompt_text, system_prompt)
     return call_model(messages, temperature=temperature, max_tokens=max_tokens)
 
-
 def cot(question, prompt_template=None, temperature=0.0, max_tokens=512):
-    # Simple chain-of-thought prompt.
+    #very simple COT prompt.
     if prompt_template is None:
         prompt_template = prompts.COT_MATH_FALLBACK
-
     prompt_text = prompt_template.format(problem=question, question=question)
     return ask_llm(prompt_text, temperature=temperature, max_tokens=max_tokens)
 
-
 def self_consistency(question, sampler, samples=3, normalizer=None):
-    # Ask the model multiple times, then pick the most common normalized answer.
+    #ask the model multiple times, then pick the most common normalized answer.
     candidates = []
-
-    for _ in range(samples):
+    for i in range(samples):
         answer = sampler(question)
         if answer is None:
             continue
         answer = str(answer).strip()
         if answer:
             candidates.append(answer)
-
     winner, tally = tools.majority_vote(candidates, normalizer=normalizer)
     return {
         "answer": winner,
@@ -38,9 +32,8 @@ def self_consistency(question, sampler, samples=3, normalizer=None):
         "tally": tally,
     }
 
-
+#ask to write python then to run it, with max token set
 def program_of_thought(question, max_tokens=700):
-    # Ask the model to write Python code, then run that code.
     prompt_text = prompts.POT_MATH.format(problem=question)
     raw_response = ask_llm(prompt_text, temperature=0.2, max_tokens=max_tokens)
     code = tools.extract_code_block(raw_response)
@@ -57,13 +50,11 @@ def program_of_thought(question, max_tokens=700):
         "execution": execution,
     }
 
-
+#another time when multiple answers are needed
 def tree_of_thoughts(question, branches=3, expected_format="short final answer"):
-    # Ask for several candidate answers, then choose one with a judge step.
     prompt_text = prompts.TOT_GENERATE.format(problem=question, branches=branches)
     raw_response = ask_llm(prompt_text, temperature=0.5, max_tokens=700)
     parsed_list = tools.extract_json_list(raw_response)
-
     candidates = []
     for item in parsed_list:
         if isinstance(item, dict):
@@ -74,7 +65,6 @@ def tree_of_thoughts(question, branches=3, expected_format="short final answer")
             clean_item = item.strip()
             if clean_item:
                 candidates.append(clean_item)
-
     best_answer = judge(question, candidates, expected_format=expected_format)
     return {
         "answer": best_answer,
@@ -82,7 +72,7 @@ def tree_of_thoughts(question, branches=3, expected_format="short final answer")
         "candidates": candidates,
     }
 
-
+#self built chain of thought for the model
 def self_refine(
     question,
     draft,
@@ -91,7 +81,6 @@ def self_refine(
     required_prefix="",
     max_tokens=900,
 ):
-    # Give the model its own rough draft and ask it to repair it.
     prompt_text = prompt_template.format(
         problem=question,
         draft=draft,
@@ -100,19 +89,16 @@ def self_refine(
     )
     return ask_llm(prompt_text, temperature=0.1, max_tokens=max_tokens)
 
-
+#easoer to split question and solve at same time like multi threading
 def decomposition(question, max_parts=3):
-    # Break a big question into smaller questions, solve those, then combine them.
     prompt_text = prompts.DECOMPOSE.format(question=question, max_parts=max_parts)
     raw_subquestions = ask_llm(prompt_text, temperature=0.0, max_tokens=400)
     parsed_subquestions = tools.extract_json_list(raw_subquestions)
-
     subquestions = []
     for item in parsed_subquestions[:max_parts]:
         text = str(item).strip()
         if text:
             subquestions.append(text)
-
     subanswers = []
     for subquestion in subquestions:
         answer_prompt = prompts.SUBQ_ANSWER.format(
@@ -126,7 +112,6 @@ def decomposition(question, max_parts=3):
                 "answer": tools.extract_final_answer(raw_answer),
             }
         )
-
     lines = []
     for item in subanswers:
         lines.append(f"- {item['question']}: {item['answer']}")
@@ -145,21 +130,17 @@ def decomposition(question, max_parts=3):
         "raw_subquestions": raw_subquestions,
     }
 
-
+#need final answer, and reprompt if necessary
 def step_back(question):
-    # This asks for general principles first, then the answer.
     prompt_text = prompts.STEP_BACK.format(question=question)
     raw_response = ask_llm(prompt_text, temperature=0.0, max_tokens=350)
-
     answer = tools.extract_final_answer(raw_response)
     lower_text = raw_response.lower()
     marker_index = lower_text.find("final answer:")
-
     if marker_index == -1:
         principles = raw_response.strip()
     else:
         principles = raw_response[:marker_index].strip()
-
     return {
         "answer": answer,
         "principles": principles,
@@ -168,34 +149,23 @@ def step_back(question):
 
 
 def react_loop(question, max_steps=2):
-    # Very small ReAct loop: think, maybe run Python, then continue.
     scratchpad = ""
     trace = []
     final_answer = ""
-
-    for _ in range(max_steps):
+    for i in range(max_steps):
         prompt_text = prompts.REACT_MATH.format(
             problem=question,
             scratchpad=scratchpad or "(empty)",
         )
         raw_response = ask_llm(prompt_text, temperature=0.0, max_tokens=500)
         trace.append(raw_response)
-
         thought, action, action_input = tools.extract_react_parts(raw_response)
-
         if action == "finish":
             final_answer = tools.extract_final_answer(action_input or raw_response)
             break
-
         if action == "python":
             execution = tools.python_exec(action_input)
-            observation = (
-                execution["value"]
-                or execution["stdout"]
-                or execution["stderr"]
-                or execution["error"]
-            )
-
+            observation = (execution["value"] or execution["stdout"] or execution["stderr"] or execution["error"])
             scratchpad = (
                 scratchpad
                 + "\nThought: "
@@ -212,51 +182,38 @@ def react_loop(question, max_steps=2):
             if execution["value"]:
                 final_answer = str(execution["value"]).strip()
                 break
-
             continue
-
         final_answer = tools.extract_final_answer(raw_response)
         break
-
     if not final_answer and trace:
         final_answer = tools.extract_final_answer(trace[-1])
+    return {"answer": final_answer,"trace": trace,}
 
-    return {
-        "answer": final_answer,
-        "trace": trace,
-    }
-
-
+#remove duplicates for effeciency
 def judge(question, candidates, expected_format="short final answer"):
-    # Remove duplicates first so the judge does not compare the same idea twice.
     unique_candidates = []
     for candidate in candidates:
         candidate = str(candidate).strip()
         if candidate and candidate not in unique_candidates:
             unique_candidates.append(candidate)
-
     if not unique_candidates:
         return ""
     if len(unique_candidates) == 1:
         return unique_candidates[0]
-
+    #unique lines
     lines = []
     for index, candidate in enumerate(unique_candidates, start=1):
         lines.append(f"{index}. {candidate}")
     candidate_text = "\n".join(lines)
-
     prompt_text = prompts.JUDGE.format(
         question=question,
         expected_format=expected_format,
-        candidates=candidate_text,
-    )
+        candidates=candidate_text)
     raw_response = ask_llm(prompt_text, temperature=0.0, max_tokens=30)
-
     for char in raw_response:
         if char.isdigit():
             choice = int(char) - 1
             if 0 <= choice < len(unique_candidates):
                 return unique_candidates[choice]
-
-    # If the judge reply is messy, just use the first candidate.
+    #bad reply, use first
     return unique_candidates[0]

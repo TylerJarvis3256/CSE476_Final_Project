@@ -6,7 +6,7 @@ from agent.pipelines import future_prediction_pipe
 from agent.pipelines import math_pipe
 from agent.pipelines import planning_pipe
 
-# One place that connects each domain name to its pipeline function.
+#one place that connects each domain name to its pipeline function.
 PIPELINES = {
     "math": math_pipe.solve,
     "coding": coding_pipe.solve,
@@ -15,13 +15,11 @@ PIPELINES = {
     "future_prediction": future_prediction_pipe.solve,
 }
 
-
+#check keyword rules
 def heuristic_domain(question):
-    # Before paying for another model call, try simple keyword rules first.
     text = question or ""
     lowered = text.lower()
     escaped = text.encode("unicode_escape").decode("ascii")
-
     if "[plan]" in lowered or "my plan is as follows" in lowered:
         return "planning"
     if "predict future events" in lowered or "do not refuse to make a prediction" in lowered:
@@ -42,29 +40,22 @@ def heuristic_domain(question):
 
 
 def classify_domain(question):
-    # Use rules first. If that fails, ask the model to classify the prompt.
+    #use rules first, with backup
     guessed = heuristic_domain(question)
     if guessed is not None:
         return guessed
-
     prompt_text = prompts.DOMAIN_CLASSIFIER.format(question=question)
     messages = build_messages(prompt_text, prompts.SYSTEM_DEFAULT)
     raw_response = call_model(messages, temperature=0.0, max_tokens=20)
-
     label = raw_response.strip().lower().replace("-", "_")
     if label in PIPELINES:
         return label
-
-    # Common sense is the safest default bucket if classification is unclear.
+    #worst case
     return "common_sense"
 
 
 def route_item(item):
     question = item.get("input", "")
     domain = item.get("domain")
-
-    if not domain:
-        domain = classify_domain(question)
-
     solver = PIPELINES.get(domain, common_sense_pipe.solve)
     return solver(question)

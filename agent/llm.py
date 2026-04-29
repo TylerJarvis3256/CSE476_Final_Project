@@ -1,13 +1,13 @@
 import os
 import time
-
+import sys
 import requests
 from dotenv import load_dotenv
 
-# Load values from a local .env file if one exists.
+#load values from a local .env file if one exists.
 load_dotenv()
 
-# Read the ASU API settings from environment variables.
+#env variables
 API_KEY = os.getenv("OPENAI_API_KEY", "sk-tRX7eS_JfCfGCfC6-1xvKg")
 API_BASE = os.getenv("API_BASE", "https://openai.rc.asu.edu/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "qwen3-30b-a3b-instruct-2507")
@@ -35,7 +35,7 @@ def reset_call_count():
 
 
 def build_messages(user_prompt, system_prompt=None):
-    # This matches the OpenAI-style chat format expected by the ASU endpoint.
+    #matches the OpenAI-style chat format expected by the ASU endpoint.
     if system_prompt is None:
         system_prompt = "You are a careful reasoning agent. Follow the output format exactly."
 
@@ -47,16 +47,11 @@ def build_messages(user_prompt, system_prompt=None):
 
 def call_model(messages, temperature=0.0, max_tokens=512, stop=None):
     global _call_count
-
-    if not API_KEY:
-        raise RuntimeError("OPENAI_API_KEY is missing. Put it in your .env file.")
-
     if _call_count >= CALL_CAP_PER_ITEM:
-        raise CallBudgetExceeded(f"hit per-item cap of {CALL_CAP_PER_ITEM}")
-
+        print(f"hit per-item cap of {CALL_CAP_PER_ITEM}")
+        sys.exit(0)
     if _call_count >= CALL_WARN_AT:
         print(f"[warn] near call cap: {_call_count}/{CALL_CAP_PER_ITEM}")
-
     headers = {
         "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json",
@@ -74,7 +69,7 @@ def call_model(messages, temperature=0.0, max_tokens=512, stop=None):
     url = f"{API_BASE}/chat/completions"
     last_error = None
 
-    # Retry a few times if the connection fails or the server has a 5xx error.
+    #retry a few times if the connection fails or the server has a 5xx error.
     for attempt in range(3):
         try:
             response = requests.post(
@@ -88,7 +83,6 @@ def call_model(messages, temperature=0.0, max_tokens=512, stop=None):
             if attempt < 2:
                 time.sleep(2 ** (attempt + 1))
             continue
-
         if response.status_code >= 500:
             last_error = RuntimeError(
                 f"server error {response.status_code}: {response.text[:300]}"
@@ -97,18 +91,15 @@ def call_model(messages, temperature=0.0, max_tokens=512, stop=None):
                 time.sleep(2 ** (attempt + 1))
             continue
 
-        # Do not retry 4xx errors because those usually mean the request itself is bad.
+        #do not retry 4xx errors because those usually mean the request itself is bad.
         if response.status_code >= 400:
             raise RuntimeError(f"API error {response.status_code}: {response.text[:500]}")
-
         data = response.json()
         _call_count += 1
         return data["choices"][0]["message"]["content"]
-
     if last_error is not None:
         raise last_error
     raise RuntimeError("the model call failed but no clear error was captured")
-
 
 if __name__ == "__main__":
     demo_messages = build_messages("What is 17 + 28? Reply with only the number.")

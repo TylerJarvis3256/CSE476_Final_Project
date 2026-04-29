@@ -7,11 +7,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-# This file is a grab-bag of helper functions.
-# I kept them together because many different pipelines need the same small tasks:
-# cleaning model output, extracting answers, normalizing text, and running Python.
-
-
+# helper functions
 def strip_code_fences(text):
     text = (text or "").strip()
     match = re.search(r"```[a-zA-Z0-9_+-]*\s*(.*?)```", text, flags=re.DOTALL)
@@ -21,12 +17,11 @@ def strip_code_fences(text):
 
 
 def extract_code_block(text):
-    # First try the easy case: the model returned a fenced code block.
+    #we assume the code block is formatted
     text = text or ""
     stripped = strip_code_fences(text)
     if stripped != text.strip():
         return stripped
-
     # If there are no fences, try to find the start of Python code.
     for marker in ("import ", "from ", "def ", "class "):
         index = text.find(marker)
@@ -37,16 +32,14 @@ def extract_code_block(text):
 
 
 def extract_boxed(text):
-    # Future-prediction answers often use \boxed{...}, so this extracts the inside.
+    #future-prediction answers often use \boxed{...}, so we need to too
     text = text or ""
     start = text.find(r"\boxed{")
     if start == -1:
         return None
-
     index = start + len(r"\boxed{")
     depth = 1
     result = []
-
     while index < len(text):
         char = text[index]
         if char == "{":
@@ -57,33 +50,27 @@ def extract_boxed(text):
                 return "".join(result).strip()
         result.append(char)
         index += 1
-
     return None
 
 
 def extract_integer(text):
     text = text or ""
-
     boxed = extract_boxed(text)
     if boxed:
         match = re.search(r"-?\d+", boxed)
         if match:
             return match.group(0)
-
     match = re.search(r"(?:final answer|answer)\s*[:=]\s*(-?\d+)", text, flags=re.IGNORECASE)
     if match:
         return match.group(1)
-
     numbers = re.findall(r"-?\d+", text)
     if numbers:
         return numbers[-1]
-
     return None
 
-
+#extracting the number from text
 def extract_number(text):
     text = text or ""
-
     boxed = extract_boxed(text)
     if boxed:
         return boxed
@@ -91,7 +78,6 @@ def extract_number(text):
     match = re.search(r"(?:final answer|answer)\s*[:=]\s*([^\n]+)", text, flags=re.IGNORECASE)
     if match:
         return match.group(1).strip()
-
     numbers = re.findall(r"-?\d+(?:\.\d+)?", text)
     if numbers:
         return numbers[-1]
@@ -100,14 +86,12 @@ def extract_number(text):
 
 
 def extract_json_list(text):
-    # Some prompts ask the model to return JSON. This tries a few safe ways to parse it.
+    #parsing json required response prompts 
     text = strip_code_fences(text)
     start = text.find("[")
     end = text.rfind("]")
-
     if start == -1 or end == -1 or end < start:
         return []
-
     payload = text[start : end + 1]
 
     for loader in (json.loads, ast.literal_eval):
@@ -120,9 +104,8 @@ def extract_json_list(text):
 
     return []
 
-
+#need comparison using regEx
 def normalize_phrase(text):
-    # Used for simple answer comparison in common-sense style tasks.
     text = (text or "").strip().lower()
     text = re.sub(r"^answer\s*[:=]\s*", "", text)
     text = re.sub(r"[^\w\s\\\-\[\]\(\),']", " ", text)
@@ -130,15 +113,12 @@ def normalize_phrase(text):
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
-
+#best output styles
 def extract_final_answer(text):
-    # Try a few common output styles and return the cleanest final answer we can.
     text = (text or "").strip()
-
     boxed = extract_boxed(text)
     if boxed:
         return boxed
-
     match = re.search(
         r"(?:final answer|answer)\s*[:=]\s*(.+)",
         text,
@@ -156,12 +136,10 @@ def extract_final_answer(text):
 
     if not lines:
         return ""
-
     return lines[-1].strip("` ")
 
-
+# Starter code is often provided
 def extract_required_prefix(text):
-    # Coding problems often include starter code that the answer should begin with.
     match = re.search(
         r"starting with:\s*```(?:python)?\s*(.*?)```",
         text,
@@ -170,7 +148,6 @@ def extract_required_prefix(text):
     if match:
         return match.group(1).strip()
     return ""
-
 
 def clean_code_answer(text, required_prefix=""):
     code = extract_code_block(text)
@@ -184,7 +161,7 @@ def clean_code_answer(text, required_prefix=""):
 
     code = "\n".join(clean_lines).strip()
 
-    # If the assignment gave a required prefix, try to force it back in.
+    #If the assignment gave a required prefix, try to force it back in.
     if required_prefix and code:
         required_prefix = required_prefix.strip()
         if not code.startswith(required_prefix):
@@ -200,9 +177,8 @@ def clean_code_answer(text, required_prefix=""):
 
     return code.strip()
 
-
 def extract_action_lines(text):
-    # Planning outputs should be a series of lines like: (action a b)
+    #Planning outputs should be a series of lines.
     lines = []
     for raw_line in (text or "").splitlines():
         line = raw_line.strip()
@@ -210,9 +186,8 @@ def extract_action_lines(text):
             lines.append(line)
     return lines
 
-
 def extract_action_names(problem):
-    # The planning prompts list actions like "Attack object" or "Feast object..."
+    #The planning prompts list actions like "Attack object" or "Feast object..."
     names = []
     for raw_line in (problem or "").splitlines():
         match = re.match(r"\s*([A-Za-z]+)\s+object", raw_line)
@@ -227,7 +202,6 @@ def validate_action_lines(text, allowed_actions=None):
     bad_lines = []
     allowed = set(allowed_actions or [])
     pattern = re.compile(r"^\(([a-z_]+)(?: [a-z0-9_]+){1,2}\)$")
-
     lines = extract_action_lines(text)
     for line in lines:
         match = pattern.match(line)
@@ -242,10 +216,8 @@ def validate_action_lines(text, allowed_actions=None):
 
     return len(bad_lines) == 0, bad_lines
 
-
 def normalize_action_plan(text):
     return "\n".join(extract_action_lines(text)).strip()
-
 
 def ensure_boxed(text):
     text = (text or "").strip()
@@ -260,11 +232,10 @@ def ensure_boxed(text):
 
 
 def parse_list_like(text):
-    # Used mostly for future-prediction answers where the model may return a list.
+    #used for future-prediction answers
     text = (text or "").strip()
     payload = extract_boxed(text) or text
     payload = strip_code_fences(payload)
-
     for loader in (json.loads, ast.literal_eval):
         try:
             value = loader(payload)
@@ -272,7 +243,6 @@ def parse_list_like(text):
                 return [str(item).strip() for item in value]
         except Exception:
             pass
-
     if "," in payload:
         parts = []
         for part in payload.split(","):
@@ -280,12 +250,9 @@ def parse_list_like(text):
             if part:
                 parts.append(part)
         return parts
-
     if payload:
         return [payload]
-
     return []
-
 
 def normalize_future_answer(text):
     items = parse_list_like(text)
@@ -295,7 +262,6 @@ def normalize_future_answer(text):
             clean_items.append(normalize_phrase(item))
         return " | ".join(clean_items)
     return normalize_phrase(extract_boxed(text) or text)
-
 
 def normalize_math_answer(text):
     boxed = extract_boxed(text)
@@ -308,7 +274,6 @@ def normalize_math_answer(text):
 
     return normalize_phrase(extract_final_answer(text))
 
-
 def normalize_code(text):
     code = clean_code_answer(text)
     lines = []
@@ -320,7 +285,7 @@ def normalize_code(text):
 
 
 def majority_vote(candidates, normalizer=None):
-    # Used by self-consistency. We count normalized answers but keep the original text.
+    #We count normalized answers but keep the original text.
     tally = {}
     first_original = {}
 
@@ -373,12 +338,9 @@ def extract_react_parts(text):
 
     return thought, action, action_input
 
-
 def python_exec(code, timeout_s=5):
-    # This runs model-generated Python in a temporary folder.
-    # It is mainly used for program-of-thought and simple code checking.
+    #This runs model-generated Python in a temporary folder.
     code = strip_code_fences(code)
-
     safe_env = {
         "PATH": os.environ.get("PATH", ""),
         "PYTHONIOENCODING": "utf-8",
